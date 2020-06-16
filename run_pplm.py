@@ -37,6 +37,7 @@ from transformers.file_utils import cached_path
 from transformers.modeling_gpt2 import GPT2LMHeadModel
 
 from pplm_classification_head import ClassificationHead
+from tqdm import tqdm
 
 PPLM_BOW = 1
 PPLM_DISCRIM = 2
@@ -451,7 +452,7 @@ def full_text_generation(
     else:
         raise Exception("Specify either a bag of words or a discriminator")
 
-    unpert_gen_tok_text, _, _ = generate_text_pplm(
+    unpert_gen_tok_text, _, _, length = generate_text_pplm(
         model=model,
         tokenizer=tokenizer,
         context=context,
@@ -469,7 +470,7 @@ def full_text_generation(
     losses_in_time = []
 
     for i in range(num_samples):
-        pert_gen_tok_text, discrim_loss, loss_in_time = generate_text_pplm(
+        pert_gen_tok_text, discrim_loss, loss_in_time, length = generate_text_pplm(
             model=model,
             tokenizer=tokenizer,
             context=context,
@@ -529,7 +530,10 @@ def generate_text_pplm(
         gamma=1.5,
         gm_scale=0.9,
         kl_scale=0.01,
-        verbosity_level=REGULAR
+        verbosity_level=REGULAR,
+        rejected_tokens = {50256},
+        max_word_repetition_ratio=0.05,
+        gracefull_ending=True
 ):
     output_so_far = None
     if context:
@@ -547,13 +551,20 @@ def generate_text_pplm(
     unpert_discrim_loss = 0
     loss_in_time = []
 
+    token_count = dict()
+    previous_token = None
+
     if verbosity_level >= VERBOSE:
         range_func = trange(length, ascii=True)
     else:
         range_func = range(length)
-
-    for i in range_func:
-
+    i = 0 
+    
+    pbar = tqdm(total=length, desc='    {} section'.format('Perturbing' if perturb else 'Generating') )
+    
+    while True:
+        if i < length: pbar.update()
+        elif i == length: print('   Gracefully ending section...')
         # Get past/probs for current output, except for last word
         # Note that GPT takes 2 inputs: past + current_token
 
@@ -564,6 +575,11 @@ def generate_text_pplm(
                 _, past, _ = model(output_so_far[:, :-1])
 
         unpert_logits, unpert_past, unpert_all_hidden = model(output_so_far)
+        for rejected_token in rejected_tokens:
+            unpert_logits[:,:,rejected_token] = float("-inf")
+        if previous_token:
+            unpert_logits[:,:,previous_token] = float('-inf') # Reject two identical consecutive tokens
+        
         unpert_last_hidden = unpert_all_hidden[-1]
 
         # check if we are abowe grad max length
@@ -657,9 +673,22 @@ def generate_text_pplm(
         )
         if verbosity_level >= REGULAR:
             print(tokenizer.decode(output_so_far.tolist()[0]))
+        last_index = int(last)
+        if last_index in token_count:
+            token_count[last_index] += 1
+        else:
+            token_count[last_index] = 1
+        
+        if token_count[last_index] > length * max_word_repetition_ratio:
+            rejected_tokens.add(last_index)
+        previous_token = last_index    
+        i += 1
+        
+        # Let the sentence finish gracefully, but not more than twice the length (might be some non-sense generation)
+        if (i >= length and tokenizer.decode(last) in {'.', ';', ')', '?', '!'}) or i >= length * 1.2:
+            break
 
-    return output_so_far, unpert_discrim_loss, loss_in_time
-
+    return output_so_far, unpert_discrim_loss, loss_in_time, i
 
 def set_generic_model_params(discrim_weights, discrim_meta):
     if discrim_weights is None:
@@ -701,7 +730,10 @@ def run_pplm_example(
         seed=0,
         no_cuda=False,
         colorama=False,
-        verbosity='regular'
+        verbosity='regular',
+        rejected_tokens = {50256},
+        max_word_repetition_ratio=0.05,
+        gracefull_ending=True
 ):
     # set Random seed
     torch.manual_seed(seed)
@@ -756,10 +788,10 @@ def run_pplm_example(
             tokenizer.bos_token + raw_text,
             add_special_tokens=False
         )
-
-    print("= Prefix of sentence =")
-    print(tokenizer.decode(tokenized_cond_text))
-    print()
+    if verbosity_level >= REGULAR: 
+        print("= Prefix of sentence =")
+        print(tokenizer.decode(tokenized_cond_text))
+        print()
 
     # generate unperturbed and perturbed texts
 
@@ -787,7 +819,10 @@ def run_pplm_example(
         gamma=gamma,
         gm_scale=gm_scale,
         kl_scale=kl_scale,
-        verbosity_level=verbosity_level
+        verbosity_level=verbosity_level,
+        rejected_tokens=rejected_tokens,
+        max_word_repetition_ratio=max_word_repetition_ratio,
+        gracefull_ending=gracefull_ending
     )
 
     # untokenize unperturbed text
@@ -795,9 +830,9 @@ def run_pplm_example(
 
     if verbosity_level >= REGULAR:
         print("=" * 80)
-    print("= Unperturbed generated text =")
-    print(unpert_gen_text)
-    print()
+        print("= Unperturbed generated text =")
+        print(unpert_gen_text)
+        print()
 
     generated_texts = []
 
@@ -830,10 +865,10 @@ def run_pplm_example(
                         pert_gen_text += tokenizer.decode([word_id])
             else:
                 pert_gen_text = tokenizer.decode(pert_gen_tok_text.tolist()[0])
-
-            print("= Perturbed generated text {} =".format(i + 1))
-            print(pert_gen_text)
-            print()
+            if verbosity_level >= REGULAR:
+                print("= Perturbed generated text {} =".format(i + 1))
+                print(pert_gen_text)
+                print()
         except:
             pass
 
@@ -842,7 +877,9 @@ def run_pplm_example(
             (tokenized_cond_text, pert_gen_tok_text, unpert_gen_tok_text)
         )
 
-    return
+    final_text = tokenizer.decode(pert_gen_tok_text.tolist()[0])
+    
+    return final_text
 
 
 if __name__ == '__main__':
