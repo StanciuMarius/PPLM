@@ -533,7 +533,8 @@ def generate_text_pplm(
         verbosity_level=REGULAR,
         rejected_tokens = {50256},
         max_word_repetition_ratio=0.05,
-        gracefull_ending=True
+        graceful_ending=True,
+        graceful_ending_limit=1.5
 ):
     output_so_far = None
     if context:
@@ -564,7 +565,7 @@ def generate_text_pplm(
     
     while True:
         if i < length: pbar.update()
-        elif i == length: print('   Gracefully ending section...')
+        elif i >= length: pbar.set_description("   Gracefully ending section({})".format(length))
         # Get past/probs for current output, except for last word
         # Note that GPT takes 2 inputs: past + current_token
 
@@ -684,8 +685,11 @@ def generate_text_pplm(
         previous_token = last_index    
         i += 1
         
+        if i >= length and not graceful_ending:
+            break
+        
         # Let the sentence finish gracefully, but not more than twice the length (might be some non-sense generation)
-        if (i >= length and tokenizer.decode(last) in {'.', ';', ')', '?', '!'}) or i >= length * 1.2:
+        if (i >= length and tokenizer.decode(last) in {'.', ';', ')', '?', '!'}) or i >= length * graceful_ending_limit:
             break
 
     return output_so_far, unpert_discrim_loss, loss_in_time, i
@@ -733,7 +737,8 @@ def run_pplm_example(
         verbosity='regular',
         rejected_tokens = {50256},
         max_word_repetition_ratio=0.05,
-        gracefull_ending=True
+        graceful_ending=True,
+        graceful_ending_limit=1.5
 ):
     # set Random seed
     torch.manual_seed(seed)
@@ -822,7 +827,8 @@ def run_pplm_example(
         verbosity_level=verbosity_level,
         rejected_tokens=rejected_tokens,
         max_word_repetition_ratio=max_word_repetition_ratio,
-        gracefull_ending=gracefull_ending
+        graceful_ending=graceful_ending,
+        graceful_ending_limit=graceful_ending_limit
     )
 
     # untokenize unperturbed text
