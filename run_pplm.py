@@ -81,7 +81,7 @@ DISCRIMINATOR_MODELS_PARAMS = {
         "url": "https://s3.amazonaws.com/models.huggingface.co/bert/pplm/discriminators/SST_classifier_head.pt",
         "class_size": 5,
         "embed_size": 1024,
-        "class_vocab": {"very_positive": 2, "very_negative": 3},
+        "class_vocab": {"positive": 0, "negative": 1, "very_positive": 2, "very_negative": 3, "neutral": 4},
         "default_class": 3,
         "pretrained_model": "gpt2-medium",
     },
