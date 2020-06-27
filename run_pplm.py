@@ -125,6 +125,7 @@ def perturb_past(
         grad_norms=None,
         stepsize=0.01,
         one_hot_bows_vectors=None,
+        bow_weights=None,
         classifier=None,
         class_label=None,
         loss_type=0,
@@ -210,8 +211,9 @@ def perturb_past(
         loss = 0.0
         loss_list = []
         if loss_type == PPLM_BOW or loss_type == PPLM_BOW_DISCRIM:
-            for one_hot_bow in one_hot_bows_vectors:
-                bow_logits = torch.mm(probs, torch.t(one_hot_bow))
+            for one_hot_bow, single_bow_weights in zip(one_hot_bows_vectors, bow_weights):
+                weighted_bow = one_hot_bow * single_bow_weights
+                bow_logits = torch.mm(probs, torch.t(weighted_bow))
                 bow_loss = -torch.log(torch.sum(bow_logits))
                 loss += bow_loss
                 loss_list.append(bow_loss)
@@ -367,19 +369,24 @@ def get_classifier(
 def get_bag_of_words_indices(bag_of_words_ids_or_paths: List[str], tokenizer) -> \
         List[List[List[int]]]:
     bow_indices = []
+    bow_weights = []
     for id_or_path in bag_of_words_ids_or_paths:
         if id_or_path in BAG_OF_WORDS_ARCHIVE_MAP:
             filepath = cached_path(BAG_OF_WORDS_ARCHIVE_MAP[id_or_path])
         else:
             filepath = id_or_path
         with open(filepath, "r") as f:
-            words = f.read().strip().split("\n")
+            words_vs_weight = list(map(lambda x: x.split('\t'), f.read().strip().split("\n")))
+            words = [item[0] for item in words_vs_weight]
+            weights = [float(item[1]) for item in words_vs_weight]
         bow_indices.append(
             [tokenizer.encode(word.strip(),
                               add_prefix_space=True,
                               add_special_tokens=False)
              for word in words])
-    return bow_indices
+        weights = torch.tensor(weights).reshape(-1, 1)
+        bow_weights.append(weights)
+    return bow_indices, bow_weights
 
 
 def build_bows_one_hot_vectors(bow_indices, tokenizer, device='cuda'):
@@ -388,7 +395,7 @@ def build_bows_one_hot_vectors(bow_indices, tokenizer, device='cuda'):
 
     one_hot_bows_vectors = []
     for single_bow in bow_indices:
-        single_bow = list(filter(lambda x: len(x) <= 1, single_bow))
+        single_bow = list(map(lambda x: x[:1], single_bow))
         single_bow = torch.tensor(single_bow).to(device)
         num_words = single_bow.shape[0]
         one_hot_bow = torch.zeros(num_words, tokenizer.vocab_size).to(device)
@@ -430,7 +437,7 @@ def full_text_generation(
 
     bow_indices = []
     if bag_of_words:
-        bow_indices = get_bag_of_words_indices(bag_of_words.split(";"),
+        bow_indices, bow_weights = get_bag_of_words_indices(bag_of_words.split(";"),
                                                tokenizer)
 
     if bag_of_words and classifier:
@@ -477,6 +484,7 @@ def full_text_generation(
             device=device,
             perturb=True,
             bow_indices=bow_indices,
+            bow_weights=bow_weights,
             classifier=classifier,
             class_label=class_id,
             loss_type=loss_type,
@@ -514,6 +522,7 @@ def generate_text_pplm(
         device="cuda",
         perturb=True,
         bow_indices=None,
+        bow_weights=None,
         classifier=None,
         class_label=None,
         loss_type=0,
@@ -546,6 +555,7 @@ def generate_text_pplm(
     # collect one hot vectors for bags of words
     one_hot_bows_vectors = build_bows_one_hot_vectors(bow_indices, tokenizer,
                                                       device)
+    bow_weights = [vec.to(device) for vec in bow_weights] if bow_weights is not None else None
 
     grad_norms = None
     last = None
@@ -608,6 +618,7 @@ def generate_text_pplm(
                     grad_norms=grad_norms,
                     stepsize=current_stepsize,
                     one_hot_bows_vectors=one_hot_bows_vectors,
+                    bow_weights=bow_weights,
                     classifier=classifier,
                     class_label=class_label,
                     loss_type=loss_type,
@@ -844,7 +855,7 @@ def run_pplm_example(
 
     bow_word_ids = set()
     if bag_of_words and colorama:
-        bow_indices = get_bag_of_words_indices(bag_of_words.split(";"),
+        bow_indices, bow_weights = get_bag_of_words_indices(bag_of_words.split(";"),
                                                tokenizer)
         for single_bow_list in bow_indices:
             # filtering all words in the list composed of more than 1 token
