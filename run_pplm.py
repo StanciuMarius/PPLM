@@ -427,6 +427,8 @@ def full_text_generation(
         gm_scale=0.9,
         kl_scale=0.01,
         verbosity_level=REGULAR,
+        graceful_ending=True,
+        graceful_ending_limit=1.5,
         **kwargs
 ):
     classifier, class_id = get_classifier(
@@ -467,7 +469,9 @@ def full_text_generation(
         length=length,
         sample=sample,
         perturb=False,
-        verbosity_level=verbosity_level
+        verbosity_level=verbosity_level,
+        graceful_ending=graceful_ending,
+        graceful_ending_limit=graceful_ending_limit
     )
     if device == 'cuda':
         torch.cuda.empty_cache()
@@ -501,7 +505,9 @@ def full_text_generation(
             gamma=gamma,
             gm_scale=gm_scale,
             kl_scale=kl_scale,
-            verbosity_level=verbosity_level
+            verbosity_level=verbosity_level,
+            graceful_ending=graceful_ending,
+            graceful_ending_limit=graceful_ending_limit,
         )
         pert_gen_tok_texts.append(pert_gen_tok_text)
         if classifier is not None:
@@ -700,7 +706,8 @@ def generate_text_pplm(
             break
         
         # Let the sentence finish gracefully, but not more than twice the length (might be some non-sense generation)
-        if (i >= length and tokenizer.decode(last) in {'.', ';', ')', '?', '!'}) or i >= length * graceful_ending_limit:
+        hard_length_limit = length * graceful_ending_limit
+        if (i >= length and tokenizer.decode(last) in {'.', ';', ')', '?', '!'}) or i >= hard_length_limit:
             break
 
     return output_so_far, unpert_discrim_loss, loss_in_time, i
