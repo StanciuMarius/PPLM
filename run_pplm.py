@@ -780,17 +780,23 @@ def run_pplm_example(
             if verbosity_level >= REGULAR:
                 print("discrim = {}, pretrained_model set "
                 "to discriminator's = {}".format(discrim, pretrained_model))
+    
+    if type(pretrained_model) == str:
+        # load pretrained model
+        model = GPT2LMHeadModel.from_pretrained(
+            pretrained_model,
+            output_hidden_states=True
+        )
+        model.to(device)
+        model.eval()
 
-    # load pretrained model
-    model = GPT2LMHeadModel.from_pretrained(
-        pretrained_model,
-        output_hidden_states=True
-    )
-    model.to(device)
-    model.eval()
+        # load tokenizer
+        tokenizer = GPT2Tokenizer.from_pretrained(pretrained_model)
+    else:
+        model, tokenizer = pretrained_model
+        model.to(device)
+        model.eval()
 
-    # load tokenizer
-    tokenizer = GPT2Tokenizer.from_pretrained(pretrained_model)
 
     # Freeze GPT-2 weights
     for param in model.parameters():
