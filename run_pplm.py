@@ -577,11 +577,13 @@ def generate_text_pplm(
         range_func = range(length)
     i = 0 
     
-    pbar = tqdm(total=length, desc='    {} section'.format('Perturbing' if perturb else 'Generating') )
+    if verbosity_level >= QUIET:
+        pbar = tqdm(total=length, desc='    {} section'.format('Perturbing' if perturb else 'Generating') )
     
     while True:
-        if i < length: pbar.update()
-        elif i >= length: pbar.set_description("   Gracefully ending section({})".format(length))
+        if verbosity_level >= QUIET:
+            if i < length: pbar.update()
+            elif i >= length: pbar.set_description("   Gracefully ending section({})".format(length))
         # Get past/probs for current output, except for last word
         # Note that GPT takes 2 inputs: past + current_token
 
